@@ -64,6 +64,13 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+func (c *Coordinator) GetNReduce(args *GetNReduceArgs, reply *GetNReduceReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	reply.NReduce = c.nReduce
+	return nil
+}
+
 func (c *Coordinator) ReportTaskDone(args *ReportTaskDoneArgs, reply *ReportTaskDoneReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -71,22 +78,28 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskDoneArgs, reply *ReportTask
 		c.mapTasks[args.TaskId].State = Finished
 		c.mapTasks[args.TaskId].WorkerID = -1
 		c.nMap -= 1
-	} else {
-		c.reduceTasks[args.TaskId].State = Finished
-		c.reduceTasks[args.TaskId].WorkerID = -1
-		c.nReduce -= 1
+		// fmt.Printf("Map task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
+	} else if args.TaskType == ReduceTask {
+		if c.reduceTasks[args.TaskId].State != Finished {
+			c.reduceTasks[args.TaskId].State = Finished
+			c.reduceTasks[args.TaskId].WorkerID = -1
+			c.nReduce -= 1
+			// fmt.Printf("Reduce task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
+		}
 	}
 
 	if c.nMap == 0 && c.nReduce == 0 {
+		// fmt.Printf("All tasks finished\n")
 		c.stage = ExitStage
-		reply.canExit = true
+		reply.CanExit = true
 	} else if c.nMap == 0 {
 		c.stage = ReduceStage
+		reply.CanExit = false
 	}
 	return nil
 }
 
-func (c *Coordinator) handleRequest(args *RequestTaskArgs, reply *RequestTaskReply) error {
+func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stage == ExitStage {
@@ -102,8 +115,7 @@ func (c *Coordinator) handleRequest(args *RequestTaskArgs, reply *RequestTaskRep
 				reply.TaskType = MapTask
 				reply.File = task.File
 				reply.TaskId = task.TaskId
-				reply.nReduce = c.nReduce
-
+				// fmt.Printf("Assign map task %v to worker %v, filename:%s\n", task.TaskId, args.WorkerID, reply.File)
 				go c.waitTask(c.mapTasks[i])
 				return nil
 			}
@@ -123,7 +135,7 @@ func (c *Coordinator) handleRequest(args *RequestTaskArgs, reply *RequestTaskRep
 			}
 		}
 	}
-	reply.TaskType = ExitTask
+	reply.TaskType = NoTask
 	return nil
 }
 
@@ -166,6 +178,13 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stage == ExitStage {
+		if c.nMap == 0 && c.nReduce == 0 {
+			ret = true
+		}
+	}
 
 	return ret
 }
@@ -190,6 +209,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.reduceTasks[i] = Task{Type: ReduceTask, State: NotStarted, File: "", TaskId: i}
 	}
 	c.stage = MapStage
+
+	// fmt.Printf("Coordinator created, nReduce: %v, nMap: %v\n", c.nReduce, c.nMap)
+
+	os.Mkdir(TempDir, 0755)
 
 	c.server()
 	return &c

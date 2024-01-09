@@ -16,13 +16,20 @@ import (
 // and reply for an RPC.
 //
 
+type GetNReduceArgs struct {
+}
+
+type GetNReduceReply struct {
+	NReduce int
+}
+
 type ReportTaskDoneArgs struct {
 	TaskType TaskType
 	TaskId   int
 }
 
 type ReportTaskDoneReply struct {
-	canExit bool
+	CanExit bool
 }
 
 type RequestTaskArgs struct {
@@ -33,7 +40,6 @@ type RequestTaskReply struct {
 	TaskType TaskType
 	TaskId   int
 	File     string
-	nReduce  int
 }
 
 type ExampleArgs struct {

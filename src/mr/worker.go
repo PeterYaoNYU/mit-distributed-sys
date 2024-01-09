@@ -47,30 +47,36 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 
+	args := GetNReduceArgs{}
+	reply := GetNReduceReply{}
+	call("Coordinator.GetNReduce", &args, &reply)
+	nReduce := reply.NReduce
+
 	for {
 		// 1. Request a task from the coordinator
 		reply, succ := requestTask()
 
-		if succ == false {
-			fmt.Println("Request task failed")
+		if !succ {
+			// fmt.Println("Request task failed")
 			return
 		}
 
 		if reply.TaskType == ExitTask {
-			fmt.Println("No task left")
+			// fmt.Println("No task left")
 			return
 		}
 
 		if reply.TaskType == MapTask {
 			// 2. Do the map task
-			doMap(mapf, reply.File, reply.TaskId, reply.nReduce)
+			// fmt.Printf("Map task %v, filename: %s, nReduce: %v\n", reply.TaskId, reply.File, nReduce)
+			doMap(mapf, reply.File, reply.TaskId, nReduce)
 			// 3. Report the task is done to the coordinator
 			reportMapDone(reply.TaskId)
 		} else {
 			// 2. Do the reduce task
 			doReduce(reducef, reply.TaskId)
 			// 3. Report the task is done to the coordinator
-			reportReduceDone()
+			reportReduceDone(reply.TaskId)
 		}
 
 		// 4. Report the task is done to the coordinator
@@ -83,7 +89,14 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
+func reportReduceDone(TaskId int) {
+	args := ReportTaskDoneArgs{TaskType: ReduceTask, TaskId: TaskId}
+	reply := ReportTaskDoneReply{}
+	call("Coordinator.ReportTaskDone", &args, &reply)
+}
+
 func doReduce(reducef func(string, []string) string, reduceID int) {
+	// println("do reduce called once")
 	// 1. Read all the intermediate files
 	files, err := filepath.Glob(fmt.Sprintf("%v/mr-*-%d", TempDir, reduceID))
 	if err != nil {
@@ -164,12 +177,12 @@ func writeMapOutput(kva []KeyValue, mapID int, nReduce int) {
 	}
 
 	for _, kv := range kva {
+		// fmt.Println(nReduce)
 		reduceID := ihash(kv.Key) % nReduce
 		err := encoders[reduceID].Encode(&kv)
 		if err != nil {
 			log.Fatalf("cannot encode kv")
 		}
-		err = encoders[reduceID].Encode(&kv)
 		if err != nil {
 			log.Fatalf("cannot encode kv")
 		}
