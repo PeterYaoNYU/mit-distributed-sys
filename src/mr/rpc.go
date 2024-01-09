@@ -26,6 +26,7 @@ type GetNReduceReply struct {
 type ReportTaskDoneArgs struct {
 	TaskType TaskType
 	TaskId   int
+	WorkerID int
 }
 
 type ReportTaskDoneReply struct {

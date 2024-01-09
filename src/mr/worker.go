@@ -90,7 +90,7 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 func reportReduceDone(TaskId int) {
-	args := ReportTaskDoneArgs{TaskType: ReduceTask, TaskId: TaskId}
+	args := ReportTaskDoneArgs{TaskType: ReduceTask, TaskId: TaskId, WorkerID: os.Getpid()}
 	reply := ReportTaskDoneReply{}
 	call("Coordinator.ReportTaskDone", &args, &reply)
 }
@@ -143,7 +143,7 @@ func doReduce(reducef func(string, []string) string, reduceID int) {
 }
 
 func reportMapDone(TaskId int) {
-	args := ReportTaskDoneArgs{TaskType: MapTask, TaskId: TaskId}
+	args := ReportTaskDoneArgs{TaskType: MapTask, TaskId: TaskId, WorkerID: os.Getpid()}
 	reply := ReportTaskDoneReply{}
 	call("Coordinator.ReportTaskDone", &args, &reply)
 }

@@ -76,14 +76,14 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskDoneArgs, reply *ReportTask
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if args.TaskType == MapTask {
-		if c.mapTasks[args.TaskId].State == Running && c.mapTasks[args.TaskId].WorkerID != -1 {
+		if c.mapTasks[args.TaskId].State == Running && c.mapTasks[args.TaskId].WorkerID != -1 && c.mapTasks[args.TaskId].WorkerID == args.WorkerID {
 			c.mapTasks[args.TaskId].State = Finished
 			c.mapTasks[args.TaskId].WorkerID = -1
 			c.nMap -= 1
 			fmt.Printf("Map task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
 		}
 	} else if args.TaskType == ReduceTask {
-		if c.reduceTasks[args.TaskId].State == Running && c.reduceTasks[args.TaskId].WorkerID != -1 {
+		if c.reduceTasks[args.TaskId].State == Running && c.reduceTasks[args.TaskId].WorkerID != -1 && c.reduceTasks[args.TaskId].WorkerID == args.WorkerID {
 			c.reduceTasks[args.TaskId].State = Finished
 			c.reduceTasks[args.TaskId].WorkerID = -1
 			c.nReduce -= 1
