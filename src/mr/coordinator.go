@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -75,16 +76,18 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskDoneArgs, reply *ReportTask
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if args.TaskType == MapTask {
-		c.mapTasks[args.TaskId].State = Finished
-		c.mapTasks[args.TaskId].WorkerID = -1
-		c.nMap -= 1
-		// fmt.Printf("Map task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
+		if c.mapTasks[args.TaskId].State == Running && c.mapTasks[args.TaskId].WorkerID != -1 {
+			c.mapTasks[args.TaskId].State = Finished
+			c.mapTasks[args.TaskId].WorkerID = -1
+			c.nMap -= 1
+			fmt.Printf("Map task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
+		}
 	} else if args.TaskType == ReduceTask {
-		if c.reduceTasks[args.TaskId].State != Finished {
+		if c.reduceTasks[args.TaskId].State == Running && c.reduceTasks[args.TaskId].WorkerID != -1 {
 			c.reduceTasks[args.TaskId].State = Finished
 			c.reduceTasks[args.TaskId].WorkerID = -1
 			c.nReduce -= 1
-			// fmt.Printf("Reduce task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
+			fmt.Printf("Reduce task %v finished, nMap: %v, nReduce: %v\n", args.TaskId, c.nMap, c.nReduce)
 		}
 	}
 
@@ -116,7 +119,7 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 				reply.File = task.File
 				reply.TaskId = task.TaskId
 				// fmt.Printf("Assign map task %v to worker %v, filename:%s\n", task.TaskId, args.WorkerID, reply.File)
-				go c.waitTask(c.mapTasks[i])
+				go c.waitTask(&c.mapTasks[i])
 				return nil
 			}
 		}
@@ -130,7 +133,7 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 				reply.TaskType = ReduceTask
 				reply.TaskId = task.TaskId
 				reply.File = task.File
-				go c.waitTask(c.reduceTasks[i])
+				go c.waitTask(&c.reduceTasks[i])
 				return nil
 			}
 		}
@@ -139,17 +142,21 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 	return nil
 }
 
-func (c *Coordinator) waitTask(task Task) {
+func (c *Coordinator) waitTask(task *Task) {
 	time.Sleep(10 * time.Second)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if task.State == Running {
 		if task.Type == MapTask {
+			fmt.Printf("Map task %v timeout, reassigning\n", task.TaskId)
 			c.mapTasks[task.TaskId].State = NotStarted
 			c.mapTasks[task.TaskId].WorkerID = -1
+			// c.nMap += 1
 		} else {
+			fmt.Printf("Reduce task %v timeout, reassigning\n", task.TaskId)
 			c.reduceTasks[task.TaskId].State = NotStarted
 			c.reduceTasks[task.TaskId].WorkerID = -1
+			// c.nReduce += 1
 		}
 	}
 }
