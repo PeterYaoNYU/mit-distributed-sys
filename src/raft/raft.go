@@ -197,6 +197,70 @@ type Entry struct {
 	Command interface{}
 }
 
+type AppendEntriesArgs struct {
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []Entry
+	LeaderCommit int
+}
+
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
+}
+
+func (rf *Raft) BroadcastHeartbeat(includeLogReplication bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	args := AppendEntriesArgs{
+		Term:     rf.currentTerm,
+		LeaderId: rf.me,
+	}
+
+	for peerIndex, _ := range rf.peers {
+		if peerIndex == rf.me {
+			continue
+		}
+		go func(peerIndex int) {
+			reply := AppendEntriesReply{}
+			ok := rf.AppendEntries(&args, &reply)
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+
+			if ok {
+				if reply.Term > rf.currentTerm {
+					rf.ChangeState(Follower)
+					rf.currentTerm = reply.Term
+					rf.votedFor = -1
+				}
+			} else {
+				DPrintf("{Node %v} fails to send AppendEntriesRequest %v to {Node %v}", rf.me, args, peerIndex)
+			}
+		}(peerIndex)
+	}
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.currentTerm {
+		reply.Term, reply.Success = rf.currentTerm, false
+		return true
+	}
+	if args.Term > rf.currentTerm {
+		rf.ChangeState(Follower)
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+	}
+	rf.electionTimer.Reset(RandomizedElectionTimeout())
+	reply.Term, reply.Success = rf.currentTerm, true
+	return true
+}
+
 //
 // example RequestVote RPC handler.
 //
@@ -371,6 +435,35 @@ func (rf *Raft) ticker() {
 	}
 }
 
+func (rf *Raft) generateRequestVoteRequest() *RequestVoteArgs {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	return &RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: rf.getLastLogIndex(),
+		LastLogTerm:  rf.getLastLogTerm(),
+	}
+}
+
+func (rf *Raft) getLastLogIndex() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(rf.logs) > 0 {
+		return len(rf.logs) - 1
+	}
+	return 0
+}
+
+func (rf *Raft) getLastLogTerm() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(rf.logs) > 0 {
+		return rf.logs[len(rf.logs)-1].Term
+	}
+	return 0
+}
 
 func (rf *Raft) StartElection() {
 	request := rf.generateRequestVoteRequest()
@@ -382,12 +475,30 @@ func (rf *Raft) StartElection() {
 			continue
 		}
 		go func(peer int) {
-			response := new (RequestVoteReply)
+			response := new(RequestVoteReply)
 			if rf.sendRequestVote(peer, request, response) {
-				rf.mu.lock()
+				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				
+				DPrintf("{Node %v} receives RequestVoteResponse %v from {Node %v} after sending RequestVoteRequest %v in term %v", rf.me, response, peer, request, rf.currentTerm)
+				if rf.currentTerm == request.Term && rf.state == Candidate {
+					if response.VoteGranted {
+						grantedVotes += 1
+						if grantedVotes > len(rf.peers)/2 {
+							DPrintf("{Node %v} receives majority votes in term %v", rf.me, rf.currentTerm)
+							rf.ChangeState(Leader)
+							rf.BroadcastHeartbeat(true)
+						}
+					}
+				} else if response.Term > rf.currentTerm {
+					DPrintf("{Node %v} finds a new leader {Node %v} with term %v and steps down in term %v", rf.me, peer, response.Term, rf.currentTerm)
+					rf.ChangeState(Follower)
+					rf.currentTerm = response.Term
+					rf.votedFor = -1
+				}
+			}
+		}(peer)
 	}
+}
 
 //
 // the service or tester wants to create a Raft server. the ports
