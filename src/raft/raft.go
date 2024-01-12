@@ -519,6 +519,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.dead = 0
+	rf.applyCh = applyCh
+	// this loc I am not sure about, what is the exact usage of applyCond?
+	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.replicatorCond = make([]*sync.Cond, len(peers))
+	rf.state = Follower
+	rf.currentTerm = 0
+	rf.votedFor = -1
+
+	rf.logs = make([]Entry, 1)
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+	rf.heartbeatTimer = time.NewTimer(HeartbeatInterval)
+	rf.electionTimer = time.NewTimer(RandomizedElectionTimeout())
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
