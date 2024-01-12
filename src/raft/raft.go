@@ -19,6 +19,7 @@ package raft
 
 import (
 	//	"bytes"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -211,9 +212,16 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+func (rf *Raft) CallAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
 func (rf *Raft) BroadcastHeartbeat(includeLogReplication bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
+
+	fmt.Printf("[BroadcastHeartbeat] {Node %v} broadcasts heartbeat in term %v\n", rf.me, rf.currentTerm)
 
 	args := AppendEntriesArgs{
 		Term:     rf.currentTerm,
@@ -226,39 +234,42 @@ func (rf *Raft) BroadcastHeartbeat(includeLogReplication bool) {
 		}
 		go func(peerIndex int) {
 			reply := AppendEntriesReply{}
-			ok := rf.AppendEntries(&args, &reply)
+			ok := rf.CallAppendEntries(peerIndex, &args, &reply)
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
 			if ok {
 				if reply.Term > rf.currentTerm {
+					fmt.Printf("[Heartbeat Receive] {Node %v} receives Heartbeat reply gtom {Node %v} with term %v and steps down in term %v", rf.me, peerIndex, reply.Term, rf.currentTerm)
 					rf.ChangeState(Follower)
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 				}
 			} else {
-				DPrintf("{Node %v} fails to send AppendEntriesRequest %v to {Node %v}", rf.me, args, peerIndex)
+				fmt.Printf("{Node %v} fails to send AppendEntriesRequest %v to {Node %v}", rf.me, args, peerIndex)
 			}
 		}(peerIndex)
 	}
 }
 
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if args.Term < rf.currentTerm {
 		reply.Term, reply.Success = rf.currentTerm, false
-		return true
+		return
 	}
 	if args.Term > rf.currentTerm {
 		rf.ChangeState(Follower)
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
+		fmt.Printf("[Heartbeat + Follower Change] {Node %v} receives heartbeat from {Node %v} in term %v\n", rf.me, args.LeaderId, rf.currentTerm)
 	}
+	fmt.Printf("[Heartbeat] {Node %v} receives heartbeat from {Node %v} in term %v\n", rf.me, args.LeaderId, rf.currentTerm)
 	rf.electionTimer.Reset(RandomizedElectionTimeout())
 	reply.Term, reply.Success = rf.currentTerm, true
-	return true
+	return
 }
 
 //
@@ -268,8 +279,8 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, response *RequestVoteReply
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// defer DPrintf("{Node %v}'s state is {state %v,term %v,commitIndex %v,lastApplied %v,firstLog %v,lastLog %v} before processing requestVoteRequest %v and reply requestVoteResponse %v", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), request, response)
-	defer DPrintf("{Node %v}'s state is {state %v,term %v,commitIndex %v,lastApplied %v} before processing requestVoteRequest %v and reply requestVoteResponse %v", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, request, response)
+	// defer fmt.Printf("{Node %v}'s state is {state %v,term %v,commitIndex %v,lastApplied %v,firstLog %v,lastLog %v} before processing requestVoteRequest %v and reply requestVoteResponse %v", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), request, response)
+	defer fmt.Printf("[RequestVote]{Node %v}'s state is {state %v,term %v,commitIndex %v,lastApplied %v} before processing requestVoteRequest %v and reply requestVoteResponse %v\n", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, request, response)
 
 	if request.Term < rf.currentTerm || (request.Term == rf.currentTerm && rf.votedFor != -1 && rf.votedFor != request.CandidateId) {
 		response.Term = rf.currentTerm
@@ -313,8 +324,8 @@ func RandomizedElectionTimeout() time.Duration {
 }
 
 func (rf *Raft) LogIsUpToDate(candidateLastLogTerm, candidateLastLogIndex int) bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
 
 	var lastLogTerm, lastLogIndex int
 	if len(rf.logs) > 0 {
@@ -412,7 +423,7 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
+	for !rf.killed() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
@@ -420,6 +431,7 @@ func (rf *Raft) ticker() {
 			rf.currentTerm += 1
 			rf.StartElection()
 			rf.electionTimer.Reset(RandomizedElectionTimeout())
+			fmt.Printf("Node %v's election timer fires, curremtTerm: %v\n", rf.me, rf.currentTerm)
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
@@ -436,8 +448,11 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) generateRequestVoteRequest() *RequestVoteArgs {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	// the lock has already been acquired at the ticker function
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
+
+	fmt.Printf("{Node %v} generates RequestVoteRequest in term %v\n", rf.me, rf.currentTerm)
 
 	return &RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -448,8 +463,6 @@ func (rf *Raft) generateRequestVoteRequest() *RequestVoteArgs {
 }
 
 func (rf *Raft) getLastLogIndex() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if len(rf.logs) > 0 {
 		return len(rf.logs) - 1
 	}
@@ -457,8 +470,6 @@ func (rf *Raft) getLastLogIndex() int {
 }
 
 func (rf *Raft) getLastLogTerm() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if len(rf.logs) > 0 {
 		return rf.logs[len(rf.logs)-1].Term
 	}
@@ -466,8 +477,9 @@ func (rf *Raft) getLastLogTerm() int {
 }
 
 func (rf *Raft) StartElection() {
+	fmt.Printf("StartElection: Node %v\n", rf.me)
 	request := rf.generateRequestVoteRequest()
-	DPrintf("Node %v asking to get elected as the leader\n", rf.me)
+	fmt.Printf("Node %v generates RequestVoteRequest %v in term %v\n", rf.me, request, rf.currentTerm)
 	grantedVotes := 1
 	rf.votedFor = rf.me
 	for peer := range rf.peers {
@@ -475,22 +487,23 @@ func (rf *Raft) StartElection() {
 			continue
 		}
 		go func(peer int) {
+			fmt.Printf("LOCK: Node %v sending to %v\n", rf.me, peer)
 			response := new(RequestVoteReply)
 			if rf.sendRequestVote(peer, request, response) {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				DPrintf("{Node %v} receives RequestVoteResponse %v from {Node %v} after sending RequestVoteRequest %v in term %v", rf.me, response, peer, request, rf.currentTerm)
+				fmt.Printf("[StartElection] {Node %v} receives RequestVoteResponse %v from {Node %v} after sending RequestVoteRequest %v in term %v\n", rf.me, response, peer, request, rf.currentTerm)
 				if rf.currentTerm == request.Term && rf.state == Candidate {
 					if response.VoteGranted {
 						grantedVotes += 1
 						if grantedVotes > len(rf.peers)/2 {
-							DPrintf("{Node %v} receives majority votes in term %v", rf.me, rf.currentTerm)
+							fmt.Printf("{Node %v} receives majority votes in term %v\n", rf.me, rf.currentTerm)
 							rf.ChangeState(Leader)
 							rf.BroadcastHeartbeat(true)
 						}
 					}
 				} else if response.Term > rf.currentTerm {
-					DPrintf("{Node %v} finds a new leader {Node %v} with term %v and steps down in term %v", rf.me, peer, response.Term, rf.currentTerm)
+					fmt.Printf("{Node %v} finds a new leader {Node %v} with term %v and steps down in term %v", rf.me, peer, response.Term, rf.currentTerm)
 					rf.ChangeState(Follower)
 					rf.currentTerm = response.Term
 					rf.votedFor = -1
@@ -498,6 +511,7 @@ func (rf *Raft) StartElection() {
 			}
 		}(peer)
 	}
+	fmt.Printf("UNLOCK: Node %v finishes StartElection\n", rf.me)
 }
 
 //
@@ -537,8 +551,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	fmt.Printf("{Node %v} is initialized with state {state %v,term %v,commitIndex %v,lastApplied %v}", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied)
+
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	fmt.Print("Raft is initialized\n")
 
 	return rf
 }
